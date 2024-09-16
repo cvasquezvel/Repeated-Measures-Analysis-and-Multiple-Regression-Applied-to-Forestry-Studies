@@ -1,0 +1,925 @@
+---
+title: "Tarea final - Estadística Aplicada a la Forestería II"
+author: "Christian Richard Alberto Vásquez Velasco"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{=html}
+<style>
+body {
+text-align: justify}
+</style>
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+options(max.print = 9999,
+        scipen = 999)
+library(agricolae)
+library(summarytools)
+library(dplyr)
+library(car)
+require(nlme)
+library(tidyr)
+library(sjPlot)
+library(effects)
+library(ggplot2)
+library(car)
+library(broom)
+```
+
+# 1. Medidas repetidas. DBCA con medidas repetidas: AUDPC evaluado en el tiempo
+
+## Reconocimiento de la información:
+
+- VARIABLE DEPENDIENTE (y): AUDPC.
+
+- VARIABLE INDEPENDIENTE (Var): Variedad (Tratamiento). Niveles: Cruza148, Musuq, Pimpernell y Tomasa.
+
+- VARIABLE INDEPENDIENTE (Block): Bloque (1, 2, 3 y 4)
+
+- VARIABLE INDEPENDIENTE (tiempo): Evaluaciones realizadas (44, 51, 58, 65, 72, 79, 86 y 93 días después de la inoculación).
+
+Según la estructura del objeto, el bloque y la Variedad deben ser factores.
+
+```{r,echo=FALSE,comment=NA}
+A<- read.table("caso_1mod.txt",header = TRUE)
+A$Var<-factor(A$Var)
+A$Block<-factor(A$Block)
+A_means <- A %>%
+  group_by(Block, Var) %>%
+  summarise(d44 = mean(d44),
+            d51 = mean(d51),
+            d58 = mean(d58),
+            d65 = mean(d65),
+            d72 = mean(d72),
+            d79 = mean(d79),
+            d86 = mean(d86),
+            d93 = mean(d93))
+A_longer <- A_means %>%
+  pivot_longer(cols = starts_with("d"),
+   names_to = "tiempo",
+   values_to = "y")
+str(A_longer)
+Y<- as.matrix(A_means[,5:10])
+```
+## Análisis exploratorio
+
+### Normalidad y Homogeneidad de varianzas
+
+```{r,echo=FALSE,comment=NA}
+ggplot(A_longer) + geom_boxplot(aes(y = y, x =Var))
+
+ggplot(A_longer) + geom_boxplot(aes(y = y, x = as.factor(tiempo), color = Var))
+```
+
+### Interacción bloque a bloque
+
+```{r,echo=FALSE,comment=NA}
+with(A_longer, interaction.plot(tiempo, Block, y))
+ggplot(A_longer, aes(y = y, x = tiempo, color = Block, linetype = Var, group = interaction(Block,
+    Var))) + geom_line() + guides(color = guide_legend(ncol = 3))
+ggplot(A_longer, aes(y = y, x = tiempo, color = Var, group = Var)) + geom_line() + facet_wrap(~Block)
+
+residualPlots(lm(y ~ Block + Var * tiempo, A_longer))
+car:::tukeyNonaddTest(lm(y ~ Block + Var * tiempo, A_longer))
+```
+
+
+## Analisis del experimento
+
+### Mediante el analisis de variancia multivarial (MANOVA)**
+
+La matriz Y es la siguiente:
+
+```{r,echo=FALSE,comment=NA}
+print(Y)
+```
+
+#### Modelo de analisis en R
+
+```
+manova(Y ~ variedad, data=A)
+```
+
+El analisis de la varincia se resume mediante 4 metodos: Wilks, Pillai, Roy y Hotelling-Lawley.
+
+El estadístico de Wilks es el más popular en la literatura, pero Hand y Taylor (1987) recomiendan el estadístico predeterminado de Pillai-Bartlett y el mas severo es el metodo de Roy.
+
+##### Método de Wilks
+
+```{r,echo=FALSE,comment=NA}
+m1 <- manova(Y ~ Var+Block, data=A_means)
+summary(m1,test = "Wilks")
+```
+
+##### Método de Pillai
+
+```{r,echo=FALSE,comment=NA}
+summary(m1,test = "Pillai")
+``` 
+
+##### Método de Roy
+
+```{r,echo=FALSE,comment=NA}
+summary(m1,test = "Roy")
+```
+
+### Otra alternativa para el analisis de variancia
+
+Se proporcionan varias estadísticas de prueba para modelos lineales multivariados producidos por lm o manova en el paquete car con la funcion Anova()
+
+#### Modelo de analisis en R
+
+```
+Anova(m1, idata=data.frame(rfactor), idesign=~rfactor, type="III")
+```
+
+```{r,echo=FALSE,comment=NA}
+rfactor <- factor(paste("f",1:6,sep=""))
+analisis <- Anova(m1, idata=data.frame(rfactor), idesign=~rfactor, type="III")
+summary(analisis,multivariate=FALSE)
+```
+
+### Analisis mediante un modelo mixto**
+
+#### Ajuste de modelos o análisis estadístico*
+
+#### Modelo utilizado:
+
+```
+lme(plantas ~ variedad*tiempo, random = ~1|rep/variedad,data=B)
+```
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=3,fig.height=2}
+op<-par(mar=c(2,0,2,0),cex=0.7)
+A_filter <- A_longer %>%
+  filter(!tiempo %in% c("d44","d53"))
+A_filter$tiempo <- as.numeric(substr(A_filter$tiempo, start = 2, stop = 3))
+A_longer$tiempo <- as.numeric(substr(A_longer$tiempo, start = 2, stop = 3))
+```
+
+
+##### Exploración de la estructura fija
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=3,fig.height=2}
+cat("Modelo 1")
+data.rm1.lme <- lme(y ~ Var * tiempo, random = ~1 | Block,
+    A_longer, method = "ML")
+summary(data.rm1.lme)
+cat("Modelo 2")
+data.rm1.lme1 <- lme(y ~ Var + tiempo, random = ~1 | Block,
+    A_longer, method = "ML")
+summary(data.rm1.lme1)
+```
+
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=3,fig.height=2}
+cat("Prueba de hipótesis para la selección de la mejor estructura fija")
+anova(data.rm1.lme, data.rm1.lme1)
+```
+Según el AIC, se elige el modelo con la estructura fija que considera la interacción de la Variedad y el Tiempo.
+
+##### Exploración de la estructura aleatoria.
+
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=3,fig.height=2}
+data.rm1.lme <- lme(y ~ Var * tiempo, random = ~1 | Block,
+    A_longer, method = "REML")
+summary(data.rm1.lme)
+data.rm1.lme1 <- lme(y ~ Var * tiempo, random = ~tiempo | Block,
+    A_longer, method = "REML")
+summary(data.rm1.lme1)
+data.rm1.lme2 <- lme(y ~ Var * tiempo, random = ~Var +
+    tiempo | Block, A_longer, method = "REML")
+summary(data.rm1.lme2)
+anova(data.rm1.lme, data.rm1.lme1, data.rm1.lme2)
+# m2 <- lme(y ~ Var+tiempo, random = ~1|Block/Var,data=A_longer)
+# anova(m2)
+```
+
+Según el AIC, se elige como mejor estructura al modelo que incluye únicamente al bloque como variable aleatoria donde tiene efecto con el intercepto.
+
+### Evaluación del modelo
+
+#### Autocorrelación temporal
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=3,fig.height=2}
+plot(ACF(data.rm1.lme, resType = "normalized"), alpha = 0.05, main = "Modelo 1")
+plot(ACF(data.rm1.lme1, resType = "normalized"), alpha = 0.05, main = "Modelo 2")
+plot(ACF(data.rm1.lme2, resType = "normalized"), alpha = 0.05, main = "Modelo 3")
+data.rm1.lme3 = update(data.rm1.lme, correlation = corAR1(form = ~tiempo |
+    Block/Var))
+plot(ACF(data.rm1.lme3, resType = "normalized"), alpha = 0.05, main = "Modelo 4")
+data.rm1.lme4 = update(data.rm1.lme1, correlation = corAR1(form = ~tiempo |
+    Block/Var))
+plot(ACF(data.rm1.lme4, resType = "normalized"), alpha = 0.05, main = "Modelo 5")
+anova(data.rm1.lme, data.rm1.lme1,data.rm1.lme2, data.rm1.lme3, data.rm1.lme4)
+```
+
+#### Residuales
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=3,fig.height=2}
+plot(data.rm1.lme)
+# names(m2)
+error<-residuals(data.rm1.lme)
+plot(density(error),axes=FALSE,main="Densidad de los datos")
+axis(1)
+shapiro.test(residuals(data.rm1.lme))
+qq.line = function(x) {
+    # following four lines from base R's qqline()
+    y <- quantile(x[!is.na(x)], c(0.25, 0.75))
+    x <- qnorm(c(0.25, 0.75))
+    slope <- diff(y)/diff(x)
+    int <- y[1L] - slope * x[1L]
+    return(c(int = int, slope = slope))
+}
+qqnorm(resid(data.rm1.lme))
+qqline(resid(data.rm1.lme))
+par(op)
+```
+
+Se puede observar que los residuos poseen distribución normal en el modelo con estructura aleatoria seleccionada.
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=9,fig.height=6}
+plot_grid(plot_model(data.rm1.lme, type = "diag"))
+```
+
+En terminos generales, se puede observar que los residuos cumplen con los supuestos de normalidad, homocedasticidad, independencia y linealidad.
+
+### Exploración de parámetros del modelo
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=9,fig.height=6}
+summary(data.rm1.lme)
+
+# intervals(data.rm1.lme)
+
+anova(data.rm1.lme)
+```
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=9,fig.height=6}
+plot(allEffects(data.rm1.lme))
+
+# plot_model(data.rm1.lme, type = "eff", terms = "tiempo")
+# plot_model(data.rm1.lme, type = "eff", terms = "Var")
+plot_model(data.rm1.lme, type = "eff", terms = c("tiempo", "Var"))
+
+# tidy(m2, effects = "fixed", conf.int = TRUE)
+
+# glance(m2)
+```
+
+### Aproximación de R square
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=9,fig.height=6}
+library(MuMIn)
+r.squaredGLMM(data.rm1.lme)
+```
+
+El $R^2$ fue de 0.86, por lo tanto, con el modelo creado se puede explicar el 86 % de la variancia de la enfermedad.
+
+### Resumen gráfico
+
+```{r}
+library(effects)
+data.rm1.eff = as.data.frame(Effect(c("tiempo", "Var"), data.rm1.lme,
+    xlevels = list(tiempo = 8, Var = 4)))
+
+ggplot(data.rm1.eff, aes(y = fit, x = tiempo, color = Var,
+    fill = Var)) + geom_line() + geom_ribbon(aes(ymin = lower,
+    ymax = upper), color = NA, alpha = 0.3) + scale_y_continuous("Y") +
+    theme_classic()
+
+
+```
+
+## Conclusión final
+
+Segun los analisis de Roy, analisis de variancia tipo III y el analisis de variancia del modelo lineal de efectos mixtos (fijo y aleatorio), se puede afirmar que, con respecto a la enfermedad las variedades tienen un comportamiento diferentes en alguno, con un riesgo de equivocarnos del $0\%.$. Además, la enfermedad tiene diferencias estadísticamente significativas a través del tiempo.
+
+Referencias: https://www.flutterbys.com.au/stats/tut/tut9.3a.html
+
+# 2. Regresión lineal múltiple. Estudio de suelo: influencia en el crecimiento de la Ralstonia (Marchitez bacteriana)
+
+Regresión múltiple: Utilizar el archivo suelo2005.txt. Se tiene datos de la enfermedad relativa de plantas (audpc) y análisis de suelo. Buscar el mejor modelo para explicar la enfermedad. Utilizar el análisis 7 como referencia. Pueden incluir otros gráficos.
+
+La Ralstonia Solanacearum es conocida como la “marchitez bacteriana en tomate”, las altas temperaturas, por encima de 25°C, y la humedad en el terreno, en especial luego de fuertes lluvias, propician el nacimiento de ésta bacteria que habita en el agua y en el suelo.
+
+El presente estudio es determinar que elementos del suelo influyen en la proliferacion de la bacteria (aumenta o disminuye la poblacion)
+
+## Reconocimiento de variables
+
+Son 35 muestras de suelo, en donde se inoculo con la bacteria en igual cantidad. Los analisis de suelo fueron realizados en la UNALM en una lectura completa de todos los elementos fisico-quimico.
+
+```{r,echo=FALSE,comment=NA}
+ralstonia <- read.table("suelo2005.txt", header = T)
+```
+
+Para crear un modelo de regresión lineal se tomó como variable dependiente al *audcp* que es la enfermedad relativa de plantas. Las posibles variables predictoras fueron:
+
+pH: Potencial de hidrógeno (pH) del suelo muestreado. Su dominio está en un rango de 0 a 14. Es una variable discreta, debido a que la medición con la herramienta se da en valores hasta con una décima y no existen valores en centésimas o milésimas entre dos valores decimales.
+
+CE: Conductividad eléctrica del suelo muestreado (en dS / cm). Es una variable continua.
+
+$CaCO_3$: Calcareo (%) del suelo muestreado. Es una variable con distribución de Bernoulli con dominio de 0 a 100 %.
+
+MO: Contenido de Materia orgánica (%) del suelo muestreado. Es una variable con distribución de Bernoulli con dominio de 0 a 100 %.
+
+CIC: Capacidad de intercambio catiónico del suelo muestreado. Representa la cantidad de cationes que las superficies pueden retener. Es una variable con continua.
+
+P: Contenido de Fósforo del suelo muestreado. Es una variable continua expresada en ppm.
+
+K: Contenido de Potasio del suelo muestreado. Es una variable continua expresada en ppm.
+
+Arena: Contenido de Arena (%) del suelo muestreado. Es una variable con distribución de Bernoulli con dominio de 0 a 100 %.
+
+Limo: Contenido de Limo (%) del suelo muestreado. Es una variable con distribución de Bernoulli con dominio de 0 a 100 %.
+
+Arcilla: Contenido de Arcilla (%) del suelo muestreado. Es una variable con distribución de Bernoulli con dominio de 0 a 100 %.
+
+Ca: Contenido de Calcio del suelo muestreado. Es una variable continua expresada en ppm.
+
+Mg: Contenido de Magnesio del suelo muestreado. Es una variable continua expresada en ppm.
+
+K.Cambiable: Contenido de Potasio cambiable del suelo muestreado. Es una variable continua expresada en ppm.
+
+Na: Contenido de Sodio del suelo muestreado. Es una variable continua expresada en ppm.
+
+B: Contenido de Boro del suelo muestreado. Es una variable continua expresada en ppm.
+
+Cu: Contenido de Cobre del suelo muestreado. Es una variable continua expresada en ppm.
+
+Fe: Contenido de Fierro del suelo muestreado. Es una variable continua expresada en ppm.
+
+Mn: Contenido de Manganeso del suelo muestreado. Es una variable continua expresada en ppm.
+
+Zn: Contenido de Zinc del suelo muestreado. Es una variable continua expresada en ppm.
+
+## Análisis exploratorio y descriptivo
+
+### Análisis descriptivo
+
+Los datos cuenta con un total de 35 observaciones (n=35).
+
+```{r,echo=FALSE,comment=NA}
+bacteria <- data.frame(ralstonia[,-1])
+cat("Primeras 6 observaciones")
+head(bacteria)
+cat("Resumen de la base de datos")
+summary(bacteria)
+cat("Resumen de la base de datos con summarytools")
+summarytools::descr(bacteria)
+```
+
+### Gráficos exploratorios
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+cat("Histograma de AUDPC")
+hist(ralstonia$audpc)
+plot(density(ralstonia$audpc, method = "kernel"))
+```	
+
+Se observa que la distribución del AUDPC es muy similar a una bimodal, con una asimetría negativa.
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(psych)
+cat("Diagrama de Correlación")
+ralstonia %>% select(audpc, pH, CE, CaCO3, MO, CIC, P, K) %>% 
+    select_if(is.numeric) %>%
+    pairs.panels
+```
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(ggplot2)
+library(GGally)
+cat("Diagrama de Correlación")
+ralstonia %>% select(audpc, Arena, Limo, Arcilla, Ca, Mg, K.Cambiable, Na) %>%
+    ggpairs(upper = list(continuous = "density", combo = "box_no_facet"), lower = list(continuous = "points", 
+        combo = "dot_no_facet")) + theme_bw()
+```
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(ggplot2)
+library(GGally)
+cat("Diagrama de Correlación")
+ralstonia %>% select(audpc, B, Cu, Fe, Mn, Zn) %>%
+    ggpairs + theme_bw()
+```
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(dplyr)
+cat("Diagrama de puntos")
+ralstonia %>% select(audpc, pH, K, Zn, Arcilla, Ca, K.Cambiable, B) %>%
+    select_if(is.numeric) %>%
+    pairs
+```	
+
+```{r, echo = F, eval=F,include=FALSE,message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+#Generando gráfico de dispersión del número de bayas cosechables vs los Kg Cosechados por hectárea
+library(ggplot2)
+cat("Diagrama de dispersión del pH y AUDPC")
+ralstonia %>% 
+  ggplot(aes(x=pH,y=audpc))+
+  geom_point(position = "jitter", size=3, colour="red")+
+  labs( title = "DIAGRAMA DE DISPERSIÓN",
+        subtitle = "pH vs AUDPC")+
+  geom_smooth(method = "lm")+
+  theme_test()
+```
+
+### Explorar las relaciones
+
+Se tiene una variable dependiente (audpc) y 19 independientes (variables edáficas) en 35 muestras de suelo.
+
+```{r,echo=FALSE,comment=NA}
+cat("Coeficientes de correlación de Pearson entre AUDPC y las variables regresoras")
+R<-correlation(ralstonia[-1],ralstonia$audpc)$correlation
+print(R,ralstonia$audpc)
+```
+
+Las variables de mayor correlacion son:
+
+pH, K, Arcilla, Ca, K.Cambiable y B
+
+## Modelo de regresión lineal multiple completo
+
+### Resumen del modelo
+
+A continuación se presenta el modelo completo:
+
+$$AUDPC=\beta_0+\beta_1*pH+\beta_2*CE+\beta_3*CaCO_3+\beta_4*MO+\beta_5*CIC+\beta_6*P+\beta_7*K+\beta_8*Arena+\beta_9*Limo+\beta_10*Arcilla+\beta_11*Ca+\beta_12*Mg+\beta_13*K.Cambiable+\beta_14*Na+\beta_15*B+\beta_16*Cu+\beta_17*Fe+\beta_18*Mn+\beta_19*Zn+\epsilon_i$$
+
+Tener en cuenta que:
+
+$\epsilon_i$ se distribuye de manera similar a la normal (N) con una media 0 y variancia constante.
+
+```{r,echo=FALSE,comment=NA}
+# x<-c(1,2,8,11,12,14,16)
+# ralstonia[,x] -> B
+cat("Resumen del modelo de regresión lineal completo")
+modelo_completo <- lm(audpc ~ ., data=ralstonia)
+summary(modelo_completo)
+```
+
+### Análisis de variancia
+
+```{r,echo=FALSE,comment=NA}
+cat("ANOVA del modelo de regresión lineal completo")
+anova(modelo_completo)
+```
+
+## Selección de variables paso a paso
+
+### Forward
+
+#### Resumen del modelo
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+cat("Resumen del modelo de regresión lineal por selección paso a paso con el método Forward")
+step(object = lm(formula = audpc ~ 1, data = ralstonia),
+ direction = "forward",
+ scope = formula(lm(audpc~.,data=ralstonia)),
+ trace = F) -> modelo_forward
+modelo_forward %>% summary
+```
+
+#### AIC del modelo
+ 
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+AIC(modelo_forward)
+```
+
+#### Coeficientes del modelo
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(tidyverse)
+library(broom)
+modelo_forward %>% 
+ tidy %>% 
+ filter(term != "(Intercept)") %>% 
+ ggplot(aes(x = term, y = estimate)) +
+ geom_col() +
+ labs(title = "Coeficientes del modelo OLS") +
+ theme_bw() +
+ theme(axis.text.x = element_text(size = 8, angle = 90))
+```
+ 
+#### VIF de las variables seleccionadas
+ 
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(faraway)
+modelo_forward %>% vif
+```
+
+#### MSE del entrenamiento
+ 
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+modelo_forward %>% predict(newdata = data.frame(ralstonia)) -> predicciones_train
+(mean((predicciones_train - ralstonia$audpc)^2) -> training_mse)
+```
+
+#### Indicadores predictivos con la base de ralstonia de entrenamiento
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(caret)
+postResample(predicciones_train, obs = ralstonia$audpc)
+```
+
+### Backward
+
+#### Resumen del modelo
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+cat("Resumen del modelo de regresión lineal por selección paso a paso con el método Backward")
+step(object = lm(formula = audpc ~ ., data = ralstonia),
+ direction = "backward",
+ scope = list(upper = ~., lower = ~1),
+ trace = F) -> modelo_backward
+modelo_backward %>% summary
+```
+
+#### AIC del modelo
+ 
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+AIC(modelo_backward)
+```
+
+#### Coeficientes del modelo
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(tidyverse)
+library(broom)
+modelo_backward %>% 
+ tidy %>% 
+ filter(term != "(Intercept)") %>% 
+ ggplot(aes(x = term, y = estimate)) +
+ geom_col() +
+ labs(title = "Coeficientes del modelo OLS") +
+ theme_bw() +
+ theme(axis.text.x = element_text(size = 8, angle = 90))
+```
+ 
+#### VIF de las variables seleccionadas
+ 
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(faraway)
+modelo_backward %>% vif
+```
+
+#### MSE del entrenamiento
+ 
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+modelo_backward %>% predict(newdata = data.frame(ralstonia)) -> predicciones_train
+(mean((predicciones_train - ralstonia$audpc)^2) -> training_mse)
+```
+
+#### Indicadores predictivos con la base de ralstonia de entrenamiento
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(caret)
+postResample(predicciones_train, obs = ralstonia$audpc)
+```
+
+### Stepwise
+
+#### Resumen del modelo
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+cat("Resumen del modelo de regresión lineal por selección paso a paso con el método Stepwise")
+step(object = lm(formula = audpc ~ 1, data = ralstonia),
+ direction = "both",
+ scope = formula(lm(audpc~.,data=ralstonia)),
+ trace = F,
+ k = log(nrow(ralstonia))) -> modelo_step
+modelo_step %>% summary
+```
+
+#### AIC del modelo
+ 
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+AIC(modelo_step)
+```
+
+#### Coeficientes del modelo
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(tidyverse)
+library(broom)
+modelo_step %>% 
+ tidy %>% 
+ filter(term != "(Intercept)") %>% 
+ ggplot(aes(x = term, y = estimate)) +
+ geom_col() +
+ labs(title = "Coeficientes del modelo OLS") +
+ theme_bw() +
+ theme(axis.text.x = element_text(size = 8, angle = 90))
+```
+ 
+#### VIF de las variables seleccionadas
+ 
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(faraway)
+modelo_step %>% vif
+```
+
+#### MSE del entrenamiento
+ 
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+modelo_step %>% predict(newdata = data.frame(ralstonia)) -> predicciones_train
+(mean((predicciones_train - ralstonia$audpc)^2) -> training_mse)
+```
+
+#### Indicadores predictivos con la base de ralstonia de entrenamiento
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(caret)
+postResample(predicciones_train, obs = ralstonia$audpc)
+```
+
+### Comparación de modelos
+
+
++------------+----------+-------------------+------------+------------+-----------+
+| *Método*   | $AIC$    |$R^2$ ajustado     | $RMSE$     | $R^2$      | $MAE$     |    
++------------+----------+-------------------+------------+------------+-----------+
+| *Forward*  | 94.47131 | 0.865             | 0.7638771  | 0.8848211  | 0.6272570 |
++------------+----------+-------------------+------------+------------+-----------+
+| *Backward* | 94.67262 | 0.8746            | 0.6833431  | 0.9078271  | 0.5259072 |
++------------+----------+-------------------+------------+------------+-----------+
+| *Stepwise* | 95.6719  | 0.857             | 0.7996144  | 0.8737919  | 0.6670123 |
++------------+----------+-------------------+------------+------------+-----------+
+
+Se selecciona al modelo Barkward, por lo que el modelo final considerará a las variables predictoras: pH, CIC, Arena, Limo, Arcilla, Mg, B, Fe y Zn. Se sustenta la selección de este modelo por obtener el menor AIC, RMSE y MAE.
+
+## Modelo de regresión lineal final
+
+### Resumen del modelo
+
+A continuación se presenta el modelo final:
+
+$$AUDPC=\beta_0+\beta_1*pH+\beta_2*CIC+\beta_3*Arena+\beta_4*Limo+\beta_5*Arcilla+\beta_6*Mg+\beta_7*B+\beta_8*Fe+\beta_9*Zn+\epsilon_i$$
+
+Tener en cuenta que:
+
+$\epsilon_i$ se distribuye de manera similar a la normal (N) con una media 0 y variancia constante.
+
+
+```{r, echo = F, eval=T, message=F, warning= F, comment=""}
+cat("Resumen del modelo de regresión lineal final")
+lm(audpc ~ pH + CIC + Arena + Limo + Arcilla + Mg + 
+    B + Fe + Zn, data = ralstonia) -> modelo_final
+```
+
+La prueba de hipótesis para los coeficientes es la siguiente:
+
+$H_0$: \beta = 0.
+$H_1$: \beta \neq 0.
+
+```{r, echo = F, eval=T, message=F, warning= F, comment=""}
+summary(modelo_final)
+```
+
+A un nivel de significancia de 0.1, los coeficientes que \beta estadísticamente diferentes de 0 se observaron para las variables pH, CIC, Arena, Limo, Arcilla, B y Zn.
+
+### Análisis de variancia
+
+La prueba de hipótesis para cada variable regresora es:
+
+$H_0$: La variable regresora es buena predictora.
+$H_1$: La variable regresora no es buena predictora.
+
+```{r, echo = F, eval=T, message=F, warning= F, comment=""}
+cat("ANOVA del modelo de regresión lineal final")
+anova(modelo_final)
+```
+
+A un nivel de significancia de 0.1, se observó que las variables pH, CIC, Arena, Limo, Arcilla, B, Fe y Zn fueron buenas predictoras. La variable Mg no es una buena variable que explique al AUDPC pero según la selección Backward ayuda a crear un mejor modelo predictivo. La eliminación de esta variable para un modelo de inferencia puede ser opcional según el criterio del investigador, sin embargo, en un modelo predictivo debería dejarse porque su uso si mejora la capacidad predictiva.
+
+
+### Análisis de supuestos
+
+#### Valores predichos vs Residuos
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+modelo1 <- modelo_final
+par(mfrow = c(1,1))
+plot(modelo1,which = 1)
+cat("Valores predichos vs Residuos del AUDPC.")
+```
+
+Se puede observar que las observaciones 3, 21 y 15 poseen valores de los residuos del AUDPC más distantes a la media de los residuos observados del AUDPC, calculada según el efecto de los valores predichos generados por las variables predictoras sobre el AUDPC. La línea de tendencia generada para los residuos del AUDPC según los valores predichos tiene una forma no lineal, lo que evidencia que los residuos del AUDPC dependen de los valores predichos y que el AUDPC estaría explicado también por otros factores no evaluados en el modelo. Los residuos no son aleatorios, por lo que es recomendable emplear una prueba de hipótesis para la evaluación del cumplimiento de linealidad y aditividad. 
+
+#### Gráfico de probabilidad normal de residuos
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+plot(modelo1,which = 2)
+cat("Gráfico Quantil – Quantil de los residuos del AUDPC.")
+```
+
+El gráfico de quantil teórico (distribución normal teórica) vs los quantiles observados (residuos estandarizados del AUDPC), evidencia que las observaciones 3, 21 y 14, están más distantes del cumplimiento de la distribución teórica normal formando una asimetría negativa. Es necesario comprobar la normalidad de los residuos con el uso de una prueba estadística.
+
+#### Valores predichos vs Raíz de los residuos estandarizados absolutos
+ 
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+plot(modelo1,which = 3)
+abline(h=sqrt(2),lwd = 0.5, lty = 3)
+cat("Valores predichos vs Raíz cuadrada de los residuos estandarizados absolutos del AUDPC.")
+```
+
+La dispersión de la raíz cuadrada de los residuos estandarizados absolutos del AUDPC, no es constante y a medida que los valores predichos del AUDPC son mayores, los residuos estandarizados absolutos también aumentan hasta que en un cierto punto disminuyen, lo que evidencia ciertos problemas de no contancia de variancia. Por estos motivos, se debe recurrir a pruebas de hipótesis para la homocedasticidad.
+
+#### Leverage vs Residuos estandarizados
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+plot(modelo1,which = 5)
+cat("Puntos de apalancamiento vs residuos estandarizados absolutos del AUDPC.")
+```
+
+Se observa que los puntos 3, 11 y 14 son los puntos más influyentes en el modelo, por lo que podría ser necesario evaluar que tanta influencia poseen sobre el modelo en caso de incumplimiento de algún supuesto.
+
+#### Distancias de Cook
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+plot(modelo1,which = 4)
+cat("Distancias de Cook de los residuos del AUDPC.")
+```
+
+Las observaciones 3, 11 y 14, podrían ser posibles valores influyentes, pues, poseen las mayores distancias de Cook.
+
+#### Distancias de Cook vs Leverage
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+plot(modelo1,which = 6)
+cat("Distancias de Cook vs Puntos de Apalancamiento de los residuos del AUDPC.")
+```
+
+Las observaciones 3 y 14, serían valores influyentes, y la observacion 11 sería un punto de apalancamiento.
+
+#### Prueba de hipótesis para la linealidad del modelo
+
+Para evaluar el cumplimiento de este supuesto, se elaboró la siguiente hipótesis:
+
+$H_0$: El modelo creado cumple con el supuesto de linealidad y aditividad.
+
+$H_1$: El modelo creado no cumple con el supuesto de linealidad y aditividad.
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(car)
+modelo_final %>% crPlots # gráfico de residuo para modelos sin interacción
+cat("Gráfico de residuo para modelos sin interacción.")
+```
+
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+modelo_final %>% residualPlots # gráfico de residuo para modelos con o sin interacción
+cat("Gráfico de residuo para modelos con interacción.")
+```
+
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(car)
+cat("Prueba de hipótesis de Tukey para evaluación de la linealidad y aditividad.")
+car:::tukeyNonaddTest(modelo_final)
+```
+
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+library(gvlma)
+cat("Prueba de hipótesis Global Stats para evaluación de la linealidad y aditividad.")
+gvmodel <- gvlma(modelo_final)
+gvmodel
+```
+
+- CONCLUSIÓN:
+
+A un nivel de significancia de 0.05, según la prueba de Tukey y Global Stats, no se rechaza la hipótesis nula (H0), por lo tanto, se cumple con el supuesto y el modelo es lineal y aditivo.
+
+#### Prueba de hipótesis para la normalidad de residuos
+
+##### Simetría de los residuos
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+cat("Medida de simetría para los residuos")
+modelo1 %>%
+  residuals() %>%
+  moments::skewness()
+```
+
+##### Curtosis de los residuos
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+cat("Medida de kurtosis para los residuos")
+modelo1 %>%
+  residuals() %>%
+  moments::kurtosis()
+```
+
+Se realizó las pruebas de hipótesis para normalidad de los residuos, con la siguiente hipótesis:
+
+$H_0:$ Los residuos estandarizados del modelo planteado se distribuyen de forma similar a la función normal.
+
+$H_1:$ Los residuos estandarizados del modelo planteado no se distribuyen de forma similar a la función normal.
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+cat("Prueba Shapiro-Wilk para los residuos de la variable con hasta 5000 muestras")
+modelo1 %>%
+  rstudent %>%
+  stats::shapiro.test()
+cat("Prueba Lilliefors para los residuos de la variable con más 50 muestras (recomendable)")
+modelo1 %>%
+  rstudent %>%
+  nortest::lillie.test()
+cat("Prueba de Anderson Darlin es similar a Shapiro")
+modelo1 %>%
+  rstudent %>%
+  nortest::ad.test()
+cat("Prueba de Kolmogorov Smirnov")
+modelo1 %>%
+  rstudent %>%
+  ks.test("pnorm")
+```
+
+CONCLUSIÓN:
+
+A un nivel de significancia de 0.05, según las pruebas de Shapiro – Wilk, Lilliefors, Anderson - Darlin y Kolmogorov - Smirnov no se rechaza la hipótesis nula (H0), por lo tanto, se cumple con el supuesto y los residuos del AUDPC poseen una distribución similar a la normal.
+
+
+#### Prueba de hipótesis para la homocedasticidad
+
+Por otro lado, al evaluar el supuesto de homocedasticidad y constrastar con la siguiente hipótesis:
+
+$H_0:$ La variancia de los errores del modelo planteado es homocedástica.
+
+$H_1:$ La variancia de los errores del modelo planteado es heterocedástica.
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+cat("Prueba de Score para varianzas no constantes")
+library(car)
+modelo1 %>%
+  ncvTest
+
+cat("Prueba de Ols Test de Breusch Pagan")
+library(olsrr)
+modelo1 %>%
+  ols_test_breusch_pagan
+
+cat("Prueba de Breusch Pagan con residuos estandarizados")
+library(lmtest)
+modelo1 %>%
+  bptest(student = T)
+
+cat("Prueba de Breusch Pagan sin residuos estandarizados")
+modelo1 %>%
+  bptest(student = F)
+
+```
+
+CONCLUSIÓN:
+
+A un nivel de significancia de 0.05, según la prueba de score para variancias no constantes y las pruebas de Breush Pagan, no se rechaza la hipótesis nula (H0), por lo tanto, se cumple con el supuesto y la variancia del AUDPC es constante.
+
+#### Prueba de hipótesis para la autocorrelación de residuos
+
+Al evaluar el supuesto de autocorrelación y constrastar la siguiente hipótesis:
+
+$H_0:$ Los errores del modelo planteado no están autocorrelacionados.
+
+$H_1:$ Los errores del modelo planteado están autocorrelacionados.
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+modelo1 %>% residuals() %>% TSA::acf()
+```
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+modelo1 %>% residuals() -> residuales
+plot(1:nrow(ralstonia),residuales, type = "l")
+lines(lowess(x = seq(1:nrow(ralstonia)),
+             y = modelo_final$residuals),
+      col = "red", lty = 1, lwd = 1)
+abline(h = 0, col = "black", lty = 2,
+       lwd = 1)
+abline(h = c(2,-2), col = "black", lty = 2,
+       lwd = 1)
+cat("Número de observación vs residuos del AUDPC.")
+```
+La observación 2 posee residuos del AUDPC más distante del valor 0 de los residuos y de la tendencia lineal de los residuos del AUDPC. Además, se puede observar que la línea de tendencia generada con la función lowess se mantiene muy cercana al residuo 0, por lo tanto, se puede asumir que la aleatorización de los residuos según el número de observación ayuda al cumplimiento del supuesto de autocorrelación de residuos.
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+cat("Prueba Durbin - Watson para autocorrelación de residuos")
+modelo1 %>% dwtest(alternative = "two.sided")
+```
+
+```{r, echo = F, eval=T, message=F, comment="", warning= F, fig.align='center',out.width = "450px"}
+cat("Prueba Durbin - Watson para autocorrelación de residuos con vectorización de los residuos")
+modelo1 %>% car::durbinWatsonTest(alternative = "two.sided",
+                            max.lag=10,
+                            reps=1e3)
+```
+
+CONCLUSIÓN:
+
+A un nivel de significancia de 0.05, según la prueba de Durbin – Watson, no se rechaza la hipótesis nula (H0), por lo tanto, se cumple con el supuesto y los residuos del AUDPC no están autocorrelacionados. El estadístico de Durbin Watson está dentro del rango de 1.5 a 2.5, y el p valor es mayor de 0.05, por lo tanto, existe independencia de los residuos.
+
+## Conclusión final
+
+Desde un punto de vista inferencial y predictivo, según la selección de variables paso a paso por el método Backward (hacia atrás), el mejor modelo para explicar el AUDPC es el que incluye a las variables pH, CIC, Arena, Limo, Arcilla, Mg, B, Fe y Zn.

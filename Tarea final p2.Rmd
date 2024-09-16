@@ -1,0 +1,265 @@
+---
+title: "Analisis con medidas repetidas"
+author: "Estadisticas Aplicada a la Foresteria II"
+date: "30/8/2021"
+output: pdf_document
+---
+
+```{=html}
+<style>
+body {
+text-align: justify}
+</style>
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+options(max.print = 9999,
+        scipen = 999)
+library(agricolae)
+library(car)
+require(nlme)
+library(dplyr)
+library(tidyr)
+library(sjPlot)
+library(effects)
+library(ggplot2)
+library(car)
+library(broom)
+```
+
+## El experimento en sobrevivencia de plantas en el tiempo
+
+Los datos corresponden al archivo "caso_8_medidas_repetidas.txt"
+
+**Lectura de datos**
+
+```{r,echo=FALSE,comment=NA}
+A<- read.table("caso_1mod.txt",header = TRUE)
+A$Var<-factor(A$Var)
+A$Block<-factor(A$Block)
+A_means <- A %>%
+  group_by(Block, Var) %>%
+  summarise(d44 = mean(d44),
+            d51 = mean(d51),
+            d58 = mean(d58),
+            d65 = mean(d65),
+            d72 = mean(d72),
+            d79 = mean(d79),
+            d86 = mean(d86),
+            d93 = mean(d93))
+A_longer <- A_means %>%
+  pivot_longer(cols = starts_with("d"),
+   names_to = "tiempo",
+   values_to = "y")
+str(A)
+Y<- as.matrix(A_means[,5:10])
+```
+
+## Análisis exploratorio
+
+### Normalidad y Homogeneidad de varianzas
+
+```{r,echo=FALSE,comment=NA}
+ggplot(A_longer) + geom_boxplot(aes(y = y, x =Var))
+
+ggplot(A_longer) + geom_boxplot(aes(y = y, x = as.factor(tiempo), color = Var))
+```
+### Interacción bloque a bloque
+
+```{r,echo=FALSE,comment=NA}
+with(A_longer, interaction.plot(tiempo, Block, y))
+ggplot(A_longer, aes(y = y, x = tiempo, color = Block, linetype = Var, group = interaction(Block,
+    Var))) + geom_line() + guides(color = guide_legend(ncol = 3))
+ggplot(A_longer, aes(y = y, x = tiempo, color = Var, group = Var)) + geom_line() + facet_wrap(~Block)
+
+residualPlots(lm(y ~ Block + Var * tiempo, A_longer))
+car:::tukeyNonaddTest(lm(y ~ Block + Var * tiempo, A_longer))
+```
+
+
+## Analisis del experimento
+
+**Mediante el analisis de variancia multivarial (MANOVA)**
+
+la matriz Y
+
+```{r,echo=FALSE,comment=NA}
+print(Y)
+```
+
+\newpage
+
+*Modelo de analisis en R*
+
+```
+manova(Y ~ variedad, data=A)
+```
+
+El analisis de la varincia se resume mediante 4 metodos: Wilks, Pillai, Roy y Hotelling-Lawley.
+
+El estadístico de Wilks es el más popular en la literatura, pero Hand y Taylor (1987) recomiendan el estadístico predeterminado de Pillai-Bartlett y el mas severo es el metodo de Roy.
+
+*Método de Wilks* 
+
+```{r,echo=FALSE,comment=NA}
+m1 <- manova(Y ~ Var+Block, data=A_means)
+summary(m1,test = "Wilks")
+```
+
+*Método de Pillai*
+
+```{r,echo=FALSE,comment=NA}
+summary(m1,test = "Pillai")
+``` 
+
+*Método de Roy*
+
+```{r,echo=FALSE,comment=NA}
+summary(m1,test = "Roy")
+```
+
+**Otra alternativa para el analisis de variancia**
+
+Se proporcionan varias estadísticas de prueba para modelos lineales multivariados producidos por lm o manova en el paquete car con la funcion Anova()
+
+*Modelo de analisis en R*
+
+```
+Anova(m1, idata=data.frame(rfactor), idesign=~rfactor, type="III")
+```
+
+```{r,echo=FALSE,comment=NA}
+rfactor <- factor(paste("f",1:6,sep=""))
+analisis <- Anova(m1, idata=data.frame(rfactor), idesign=~rfactor, type="III")
+summary(analisis,multivariate=FALSE)
+```
+
+**Analisis mediante un modelo mixto**
+
+*Ajuste de modelos o análisis estadístico*
+
+*Modelo utilizado:*
+
+```
+lme(plantas ~ variedad*tiempo, random = ~1|rep/variedad,data=B)
+```
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=3,fig.height=2}
+op<-par(mar=c(2,0,2,0),cex=0.7)
+A_filter <- A_longer %>%
+  filter(!tiempo %in% c("d44","d53"))
+A_filter$tiempo <- as.numeric(substr(A_filter$tiempo, start = 2, stop = 3))
+A_longer$tiempo <- as.numeric(substr(A_longer$tiempo, start = 2, stop = 3))
+
+# Explore the fixed structure
+data.rm1.lme <- lme(y ~ Var * tiempo, random = ~1 | Block,
+    A_longer, method = "ML")
+data.rm1.lme1 <- lme(y ~ Var + tiempo, random = ~1 | Block,
+    A_longer, method = "ML")
+anova(data.rm1.lme, data.rm1.lme1)
+
+# Explore the random structure
+data.rm1.lme <- lme(y ~ Var * tiempo, random = ~1 | Block,
+    A_longer, method = "REML")
+data.rm1.lme1 <- lme(y ~ Var * tiempo, random = ~tiempo | Block,
+    A_longer, method = "REML")
+data.rm1.lme2 <- lme(y ~ Var * tiempo, random = ~Var +
+    tiempo | Block, A_longer, method = "REML")
+anova(data.rm1.lme, data.rm1.lme1, data.rm1.lme2)
+# m2 <- lme(y ~ Var+tiempo, random = ~1|Block/Var,data=A_longer)
+# anova(m2)
+```
+
+*Evaluación del modelo*
+
+**Autocorrelación temporal**
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=3,fig.height=2}
+plot(ACF(data.rm1.lme, resType = "normalized"), alpha = 0.05)
+plot(ACF(data.rm1.lme1, resType = "normalized"), alpha = 0.05)
+plot(ACF(data.rm1.lme2, resType = "normalized"), alpha = 0.05)
+data.rm1.lme3 = update(data.rm1.lme, correlation = corAR1(form = ~tiempo |
+    Block/Var))
+plot(ACF(data.rm1.lme3, resType = "normalized"), alpha = 0.05)
+data.rm1.lme4 = update(data.rm1.lme1, correlation = corAR1(form = ~tiempo |
+    Block/Var))
+plot(ACF(data.rm1.lme4, resType = "normalized"), alpha = 0.05)
+anova(data.rm1.lme, data.rm1.lme1,data.rm1.lme2, data.rm1.lme3, data.rm1.lme4)
+```
+**Residuales**
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=3,fig.height=2}
+plot(data.rm1.lme)
+# names(m2)
+error<-residuals(data.rm1.lme)
+plot(density(error),axes=FALSE,main="Densidad de los datos")
+axis(1)
+shapiro.test(residuals(data.rm1.lme))
+qq.line = function(x) {
+    # following four lines from base R's qqline()
+    y <- quantile(x[!is.na(x)], c(0.25, 0.75))
+    x <- qnorm(c(0.25, 0.75))
+    slope <- diff(y)/diff(x)
+    int <- y[1L] - slope * x[1L]
+    return(c(int = int, slope = slope))
+}
+qqnorm(resid(data.rm1.lme))
+qqline(resid(data.rm1.lme))
+par(op)
+```
+
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=9,fig.height=6}
+plot_grid(plot_model(data.rm1.lme, type = "diag"))
+```
+
+*Exploración de parámetros del modelo*
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=9,fig.height=6}
+summary(data.rm1.lme)
+
+# intervals(data.rm1.lme)
+
+anova(data.rm1.lme)
+
+plot(allEffects(data.rm1.lme))
+
+plot_model(data.rm1.lme, type = "eff", terms = "tiempo")
+plot_model(data.rm1.lme, type = "eff", terms = "Var")
+plot_model(data.rm1.lme, type = "eff", terms = c("tiempo", "Var"))
+
+
+
+# tidy(m2, effects = "fixed", conf.int = TRUE)
+
+# glance(m2)
+```
+*Aproximación de R square*
+
+```{r,echo=FALSE,comment=NA,fig.align='center',fig.width=9,fig.height=6}
+library(MuMIn)
+r.squaredGLMM(m2)
+```
+
+*Resumen gráfico*
+
+```{r}
+library(effects)
+data.rm1.eff = as.data.frame(Effect(c("tiempo", "Var"), data.rm1.lme,
+    xlevels = list(tiempo = 8, Var = 4)))
+
+ggplot(data.rm1.eff, aes(y = fit, x = tiempo, color = Var,
+    fill = Var)) + geom_line() + geom_ribbon(aes(ymin = lower,
+    ymax = upper), color = NA, alpha = 0.3) + scale_y_continuous("Y") +
+    theme_classic()
+
+# Referencias: https://www.flutterbys.com.au/stats/tut/tut9.3a.html
+```
+
+
+
+
+**Conclusión:**
+
+Segun los analisis de Roy, analisis de variancia tipo III y el analisis de variancia del modelo lineal de efectos mixtos (fijo y aleatorio), se puede afirmar que las variedades tienen un comportamiento diferentes en alguno, con un riesgo de equivocarnos del $6\%.$
+
